@@ -29,7 +29,10 @@ class AuthController extends Controller
 
         $token = $user->createToken(
             'fincore-api',
-            ['accounts:read'],
+            [
+                'accounts:read',
+                'transfers:create',
+            ],
             $expiresAt
         );
 

@@ -1,0 +1,145 @@
+<?php
+
+namespace App\Actions\Transfers;
+
+use App\Enums\AccountStatus;
+use App\Enums\TransferStatus;
+use App\Models\Account;
+use App\Models\Transfer;
+use App\Models\User;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+
+class CreateTransfer
+{
+    public function execute(
+        User $user,
+        int $sourceAccountId,
+        int $destinationAccountId,
+        int $amountMinor,
+        string $idempotencyKey,
+    ): Transfer {
+        $existingTransfer = Transfer::query()
+            ->where('initiated_by_user_id', $user->id)
+            ->where('idempotency_key', $idempotencyKey)
+            ->first();
+
+        if ($existingTransfer) {
+            return $existingTransfer;
+        }
+
+        $lockKey = sprintf(
+            'transfer:%d:%s',
+            $user->id,
+            $idempotencyKey
+        );
+
+        return Cache::lock($lockKey, 10)->block(5, function () use (
+            $user,
+            $sourceAccountId,
+            $destinationAccountId,
+            $amountMinor,
+            $idempotencyKey,
+        ) {
+            $existingTransfer = Transfer::query()
+                ->where('initiated_by_user_id', $user->id)
+                ->where('idempotency_key', $idempotencyKey)
+                ->first();
+
+            if ($existingTransfer) {
+                return $existingTransfer;
+            }
+
+            return DB::transaction(function () use (
+                $user,
+                $sourceAccountId,
+                $destinationAccountId,
+                $amountMinor,
+                $idempotencyKey,
+            ) {
+                $accountIds = [
+                    $sourceAccountId,
+                    $destinationAccountId,
+                ];
+
+                sort($accountIds);
+
+                $accounts = Account::query()
+                    ->whereIn('id', $accountIds)
+                    ->lockForUpdate()
+                    ->get()
+                    ->keyBy('id');
+
+                $sourceAccount = $accounts->get($sourceAccountId);
+                $destinationAccount = $accounts->get($destinationAccountId);
+
+                if (! $sourceAccount || ! $destinationAccount) {
+                    throw ValidationException::withMessages([
+                        'accounts' => ['One or more accounts do not exist.'],
+                    ]);
+                }
+
+                if ($sourceAccount->user_id !== $user->id) {
+                    throw ValidationException::withMessages([
+                        'source_account_id' => [
+                            'You are not allowed to transfer from this account.',
+                        ],
+                    ]);
+                }
+
+                if ($sourceAccount->status !== AccountStatus::Active) {
+                    throw ValidationException::withMessages([
+                        'source_account_id' => [
+                            'The source account is not active.',
+                        ],
+                    ]);
+                }
+
+                if ($destinationAccount->status !== AccountStatus::Active) {
+                    throw ValidationException::withMessages([
+                        'destination_account_id' => [
+                            'The destination account is not active.',
+                        ],
+                    ]);
+                }
+
+                if ($sourceAccount->currency !== $destinationAccount->currency) {
+                    throw ValidationException::withMessages([
+                        'destination_account_id' => [
+                            'Accounts must use the same currency.',
+                        ],
+                    ]);
+                }
+
+                if ($sourceAccount->balance_minor < $amountMinor) {
+                    throw ValidationException::withMessages([
+                        'amount_minor' => [
+                            'Insufficient funds.',
+                        ],
+                    ]);
+                }
+
+                $sourceAccount->balance_minor -= $amountMinor;
+                $destinationAccount->balance_minor += $amountMinor;
+
+                $sourceAccount->save();
+                $destinationAccount->save();
+
+                $transfer = new Transfer();
+
+                $transfer->initiated_by_user_id = $user->id;
+                $transfer->source_account_id = $sourceAccount->id;
+                $transfer->destination_account_id = $destinationAccount->id;
+                $transfer->amount_minor = $amountMinor;
+                $transfer->currency = $sourceAccount->currency;
+                $transfer->status = TransferStatus::Completed;
+                $transfer->idempotency_key = $idempotencyKey;
+
+                $transfer->save();
+
+                return $transfer;
+            });
+        });
+    }
+}
