@@ -10,6 +10,8 @@ use App\Models\User;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Auth\Access\AuthorizationException;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class CreateTransfer
 {
@@ -20,12 +22,21 @@ class CreateTransfer
         int $amountMinor,
         string $idempotencyKey,
     ): Transfer {
+        $requestHash = $this->makeRequestHash(
+            userId: $user->id,
+            sourceAccountId: $sourceAccountId,
+            destinationAccountId: $destinationAccountId,
+            amountMinor: $amountMinor,
+        );
+
         $existingTransfer = Transfer::query()
             ->where('initiated_by_user_id', $user->id)
             ->where('idempotency_key', $idempotencyKey)
             ->first();
 
         if ($existingTransfer) {
+            $this->assertSameRequest($existingTransfer, $requestHash);
+
             return $existingTransfer;
         }
 
@@ -41,6 +52,7 @@ class CreateTransfer
             $destinationAccountId,
             $amountMinor,
             $idempotencyKey,
+            $requestHash,
         ) {
             $existingTransfer = Transfer::query()
                 ->where('initiated_by_user_id', $user->id)
@@ -48,6 +60,8 @@ class CreateTransfer
                 ->first();
 
             if ($existingTransfer) {
+                $this->assertSameRequest($existingTransfer, $requestHash);
+
                 return $existingTransfer;
             }
 
@@ -57,6 +71,7 @@ class CreateTransfer
                 $destinationAccountId,
                 $amountMinor,
                 $idempotencyKey,
+                $requestHash,
             ) {
                 $accountIds = [
                     $sourceAccountId,
@@ -81,11 +96,9 @@ class CreateTransfer
                 }
 
                 if ($sourceAccount->user_id !== $user->id) {
-                    throw ValidationException::withMessages([
-                        'source_account_id' => [
-                            'You are not allowed to transfer from this account.',
-                        ],
-                    ]);
+                    throw new AuthorizationException(
+                        'You are not allowed to transfer from this account.'
+                    );
                 }
 
                 if ($sourceAccount->status !== AccountStatus::Active) {
@@ -128,6 +141,8 @@ class CreateTransfer
 
                 $transfer = new Transfer();
 
+
+                $transfer->request_hash = $requestHash;
                 $transfer->initiated_by_user_id = $user->id;
                 $transfer->source_account_id = $sourceAccount->id;
                 $transfer->destination_account_id = $destinationAccount->id;
@@ -141,5 +156,35 @@ class CreateTransfer
                 return $transfer;
             });
         });
+    }
+
+    private function makeRequestHash(
+        int $userId,
+        int $sourceAccountId,
+        int $destinationAccountId,
+        int $amountMinor,
+    ): string {
+        return hash(
+            'sha256',
+            sprintf(
+                '%d:%d:%d:%d',
+                $userId,
+                $sourceAccountId,
+                $destinationAccountId,
+                $amountMinor,
+            )
+        );
+    }
+
+    private function assertSameRequest(
+        Transfer $transfer,
+        string $requestHash,
+    ): void {
+        if ($transfer->request_hash !== $requestHash) {
+            throw new HttpException(
+                409,
+                'This Idempotency-Key has already been used for a different request.'
+            );
+        }
     }
 }
