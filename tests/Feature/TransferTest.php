@@ -62,6 +62,22 @@ class TransferTest extends TestCase
         );
 
         $this->assertDatabaseCount('transfers', 1);
+
+        $this->assertDatabaseCount('outbox_events', 1);
+
+        $this->assertDatabaseHas('outbox_events', [
+            'event_type' => 'transfer.completed',
+            'schema_version' => 1,
+            'aggregate_type' => 'transfer',
+        ]);
+        $outboxEvent = \App\Models\OutboxEvent::query()->firstOrFail();
+
+        $this->assertNotNull($outboxEvent->occurred_at);
+
+        $this->assertSame(
+            $source->id,
+            $outboxEvent->payload['source_account_id']
+        );
     }
     public function test_transfer_fails_when_balance_is_insufficient(): void
     {
@@ -102,6 +118,7 @@ class TransferTest extends TestCase
         $this->assertSame(2_000, $destination->fresh()->balance_minor);
 
         $this->assertDatabaseCount('transfers', 0);
+        $this->assertDatabaseCount('outbox_events', 0);
     }
     public function test_user_cannot_transfer_from_another_users_account(): void
     {
@@ -148,6 +165,7 @@ class TransferTest extends TestCase
         );
 
         $this->assertDatabaseCount('transfers', 0);
+        $this->assertDatabaseCount('outbox_events', 0);
     }
     public function test_duplicate_idempotent_request_does_not_transfer_money_twice(): void
     {

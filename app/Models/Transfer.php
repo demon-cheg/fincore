@@ -5,7 +5,21 @@ namespace App\Models;
 use App\Enums\TransferStatus;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
+/**
+ * @property int $id
+ * @property int $initiated_by_user_id
+ * @property int $source_account_id
+ * @property int $destination_account_id
+ * @property int $amount_minor
+ * @property string $currency
+ * @property TransferStatus $status
+ * @property string $idempotency_key
+ * @property string|null $request_hash
+ * @property Carbon|null $created_at
+ * @property Carbon|null $updated_at
+ */
 class Transfer extends Model
 {
     protected $fillable = [];
@@ -18,6 +32,9 @@ class Transfer extends Model
         ];
     }
 
+    /**
+     * @return BelongsTo<User, $this>
+     */
     public function initiatedBy(): BelongsTo
     {
         return $this->belongsTo(
@@ -26,6 +43,9 @@ class Transfer extends Model
         );
     }
 
+    /**
+     * @return BelongsTo<Account, $this>
+     */
     public function sourceAccount(): BelongsTo
     {
         return $this->belongsTo(
@@ -34,6 +54,9 @@ class Transfer extends Model
         );
     }
 
+    /**
+     * @return BelongsTo<Account, $this>
+     */
     public function destinationAccount(): BelongsTo
     {
         return $this->belongsTo(

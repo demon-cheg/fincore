@@ -10,7 +10,9 @@ class CreateApiTokenRequest extends FormRequest
     {
         return true;
     }
-
+    /**
+     * @return array<string, list<string>>
+     */
     public function rules(): array
     {
         return [

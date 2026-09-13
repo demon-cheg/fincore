@@ -5,11 +5,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     libicu-dev \
     libzip-dev \
+    libonig-dev \
     && docker-php-ext-install -j$(nproc) \
         pdo_mysql \
         intl \
         zip \
         pcntl \
+        bcmath \
+        mbstring \
+        sockets \
     && pecl install redis \
     && docker-php-ext-enable redis \
     && apt-get clean \

@@ -7,6 +7,8 @@ use App\Enums\TransferStatus;
 use App\Models\Account;
 use App\Models\Transfer;
 use App\Models\User;
+use App\Models\OutboxEvent;
+use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -46,14 +48,16 @@ class CreateTransfer
             $idempotencyKey
         );
 
-        return Cache::lock($lockKey, 10)->block(5, function () use (
+        return Cache::lock($lockKey, 10)->block(
+        5,
+        function () use (
             $user,
             $sourceAccountId,
             $destinationAccountId,
             $amountMinor,
             $idempotencyKey,
             $requestHash,
-        ) {
+        ): Transfer {
             $existingTransfer = Transfer::query()
                 ->where('initiated_by_user_id', $user->id)
                 ->where('idempotency_key', $idempotencyKey)
@@ -65,14 +69,15 @@ class CreateTransfer
                 return $existingTransfer;
             }
 
-            return DB::transaction(function () use (
+            return DB::transaction(
+            function () use (
                 $user,
                 $sourceAccountId,
                 $destinationAccountId,
                 $amountMinor,
                 $idempotencyKey,
                 $requestHash,
-            ) {
+            ): Transfer {
                 $accountIds = [
                     $sourceAccountId,
                     $destinationAccountId,
@@ -152,6 +157,27 @@ class CreateTransfer
                 $transfer->idempotency_key = $idempotencyKey;
 
                 $transfer->save();
+
+                $outboxEvent = new OutboxEvent();
+
+                $outboxEvent->id = (string) Str::uuid();
+                $outboxEvent->event_type = 'transfer.completed';
+                $outboxEvent->schema_version = 1;
+                $outboxEvent->occurred_at = now();
+
+                $outboxEvent->aggregate_type = 'transfer';
+                $outboxEvent->aggregate_id = $transfer->id;
+
+                $outboxEvent->payload = [
+                    'transfer_id' => $transfer->id,
+                    'source_account_id' => $sourceAccount->id,
+                    'destination_account_id' => $destinationAccount->id,
+                    'amount_minor' => $amountMinor,
+                    'currency' => $sourceAccount->currency,
+                    'initiated_by_user_id' => $user->id,
+                ];
+
+                $outboxEvent->save();
 
                 return $transfer;
             });

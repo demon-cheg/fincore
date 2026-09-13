@@ -47,7 +47,7 @@ class AuthController extends Controller
     {
         $request->user()
             ->currentAccessToken()
-            ?->delete();
+            ->delete();
 
         return response()->noContent();
     }
