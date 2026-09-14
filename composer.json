@@ -51,6 +51,13 @@
             "@php artisan config:clear --ansi @no_additional_args",
             "@php artisan test"
         ],
+        "analyse": [
+            "phpstan analyse --memory-limit=2G"
+        ],
+        "quality": [
+            "@test",
+            "@analyse"
+        ],
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
             "@php artisan package:discover --ansi"
